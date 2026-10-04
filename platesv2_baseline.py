@@ -18,7 +18,6 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
 
-
 TRAIN_PREFIX = "plates/train/"
 TEST_PREFIX = "plates/test/"
 LABEL_TO_INT = {"dirty": 0, "cleaned": 1}
@@ -36,10 +35,11 @@ class Sample:
 
 class SquarePad:
     """Преобразование изображения в квадратную форму с padding.
-    
+
     Добавляет отступы (padding) до квадрата, заполняя их средним цветом изображения.
     Это сохраняет пропорции объектов и избегает искажений при resize.
     """
+
     def __call__(self, image: Image.Image) -> Image.Image:
         fill = tuple(int(v) for v in ImageStat.Stat(image).mean)
         side = max(image.size)
@@ -193,14 +193,14 @@ def load_samples(zip_path: Path) -> tuple[list[Sample], list[Sample]]:
 
 def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Compose]:
     """Создание трансформаций для обучения и валидации.
-    
+
     Train transform включает агрессивную аугментацию для борьбы с переобучением
     на малом датасете (40 изображений):
     - RandomResizedCrop: случайный crop с масштабированием
     - Flips: горизонтальные и вертикальные отражения
     - Rotation: повороты до 22 градусов
     - ColorJitter: изменение яркости, контраста, насыщенности
-    
+
     Eval transform использует детерминированную обработку:
     - Resize с небольшим увеличением (1.12x)
     - CenterCrop до целевого размера
@@ -248,12 +248,12 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
 
 def build_model(device: torch.device, weights_mode: str) -> nn.Module:
     """Создание модели MobileNetV3-Small с transfer learning.
-    
+
     Архитектура:
     - Backbone: MobileNetV3-Small (предобучен на ImageNet)
     - Замораживаем все слои кроме последнего блока features[-1]
     - Заменяем classifier на бинарную классификацию (2 класса)
-    
+
     Это позволяет использовать предобученные признаки и дообучить
     только верхние слои на малом датасете (40 изображений).
     """
@@ -265,13 +265,13 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
             weights = models.MobileNet_V3_Small_Weights.DEFAULT
         except Exception:
             weights = None
-    
+
     try:
         model = models.mobilenet_v3_small(weights=weights)
     except Exception:
         print("warning=failed_to_load_imagenet_weights fallback=random_init")
         model = models.mobilenet_v3_small(weights=None)
-    
+
     # Замена последнего слоя для бинарной классификации
     model.classifier[3] = nn.Linear(model.classifier[3].in_features, 2)
 
@@ -288,7 +288,9 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
     return model.to(device)
 
 
-def build_optimizer(model: nn.Module, args: argparse.Namespace) -> torch.optim.Optimizer:
+def build_optimizer(
+    model: nn.Module, args: argparse.Namespace
+) -> torch.optim.Optimizer:
     head_params = list(model.classifier.parameters())
     backbone_params = list(model.features[-1].parameters())
     return torch.optim.AdamW(
@@ -335,14 +337,14 @@ def predict_proba(
     workers: int,
 ) -> np.ndarray:
     """Предсказание вероятностей с Test Time Augmentation (TTA).
-    
+
     TTA применяет 3 варианта аугментации (оригинал, зеркало, переворот)
     и усредняет предсказания для повышения стабильности результатов.
     """
     tta_ops = [
-        None,              # Оригинальное изображение
-        ImageOps.mirror,   # Горизонтальное отражение
-        ImageOps.flip,     # Вертикальное отражение
+        None,  # Оригинальное изображение
+        ImageOps.mirror,  # Горизонтальное отражение
+        ImageOps.flip,  # Вертикальное отражение
     ]
     probabilities = []
 
@@ -419,7 +421,9 @@ def train_fold(
             batch_size=args.batch_size,
             workers=args.workers,
         )
-        valid_targets = np.asarray([train_samples[i].label for i in valid_idx], dtype=int)
+        valid_targets = np.asarray(
+            [train_samples[i].label for i in valid_idx], dtype=int
+        )
         valid_pred = valid_probs.argmax(axis=1)
         valid_score = accuracy_score(valid_targets, valid_pred)
 
@@ -449,7 +453,7 @@ def run_cross_validation(
     device: torch.device,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Кросс-валидация с сохранением out-of-fold предсказаний.
-    
+
     Использует StratifiedKFold для сохранения баланса классов в каждом фолде.
     Возвращает out-of-fold предсказания для train и усредненные предсказания для test.
     """
@@ -550,9 +554,7 @@ def main() -> None:
     if not args.zip_path.exists():
         raise FileNotFoundError(f"Missing archive: {args.zip_path}")
     if not args.sample_submission.exists():
-        raise FileNotFoundError(
-            f"Missing sample submission: {args.sample_submission}"
-        )
+        raise FileNotFoundError(f"Missing sample submission: {args.sample_submission}")
 
     device = resolve_device()
     train_samples, test_samples = load_samples(args.zip_path)
