@@ -1,3 +1,10 @@
+"""
+Обучение baseline-модели для Kaggle Cleaned vs Dirty V2.
+
+Transfer learning на MobileNetV3-Small с кросс-валидацией, early stopping
+и Test Time Augmentation. Результат - файл submission.csv.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -5,6 +12,7 @@ import copy
 import io
 import random
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,10 +32,15 @@ LABEL_TO_INT = {"dirty": 0, "cleaned": 1}
 INT_TO_LABEL = {value: key for key, value in LABEL_TO_INT.items()}
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+NUM_CLASSES = len(LABEL_TO_INT)
+
+ImageOp = Callable[[Image.Image], Image.Image]
 
 
 @dataclass(frozen=True)
 class Sample:
+    """Изображение из архива: id, сырые байты и метка (None для теста)."""
+
     image_id: str
     image_bytes: bytes
     label: int | None = None
@@ -50,12 +63,14 @@ class SquarePad:
 
 
 class PlateDataset(Dataset):
+    """Датасет поверх списка Sample с выбором подмножества по индексам."""
+
     def __init__(
         self,
         samples: list[Sample],
         indices: np.ndarray,
         transform: transforms.Compose,
-        image_op=None,
+        image_op: ImageOp | None = None,
     ) -> None:
         self.samples = samples
         self.indices = [int(index) for index in indices]
@@ -65,7 +80,7 @@ class PlateDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int, str]:
         sample = self.samples[self.indices[index]]
         image = Image.open(io.BytesIO(sample.image_bytes)).convert("RGB")
         if self.image_op is not None:
@@ -146,6 +161,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def set_seed(seed: int) -> None:
+    """Фиксация seed для воспроизводимости результатов."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -154,6 +170,7 @@ def set_seed(seed: int) -> None:
 
 
 def resolve_device() -> torch.device:
+    """Выбор устройства: CUDA, затем MPS, иначе CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     if torch.backends.mps.is_available():
@@ -162,6 +179,7 @@ def resolve_device() -> torch.device:
 
 
 def load_samples(zip_path: Path) -> tuple[list[Sample], list[Sample]]:
+    """Чтение train и test изображений из архива plates.zip."""
     train_samples: list[Sample] = []
     test_samples: list[Sample] = []
 
@@ -273,7 +291,7 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
         model = models.mobilenet_v3_small(weights=None)
 
     # Замена последнего слоя для бинарной классификации
-    model.classifier[3] = nn.Linear(model.classifier[3].in_features, 2)
+    model.classifier[3] = nn.Linear(model.classifier[3].in_features, NUM_CLASSES)
 
     # Заморозка всех параметров
     for parameter in model.parameters():
@@ -291,6 +309,7 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
 def build_optimizer(
     model: nn.Module, args: argparse.Namespace
 ) -> torch.optim.Optimizer:
+    """AdamW с раздельными learning rate для backbone и classifier."""
     head_params = list(model.classifier.parameters())
     backbone_params = list(model.features[-1].parameters())
     return torch.optim.AdamW(
@@ -309,6 +328,7 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
 ) -> float:
+    """Одна эпоха обучения; возвращает средний loss по датасету."""
     model.train()
     running_loss = 0.0
 
@@ -465,8 +485,8 @@ def run_cross_validation(
     )
     eval_transform = build_transforms(args.image_size)[1]
 
-    oof_prob = np.zeros((len(train_samples), 2), dtype=np.float32)
-    test_prob = np.zeros((len(test_samples), 2), dtype=np.float32)
+    oof_prob = np.zeros((len(train_samples), NUM_CLASSES), dtype=np.float32)
+    test_prob = np.zeros((len(test_samples), NUM_CLASSES), dtype=np.float32)
     fold_scores = []
 
     for fold_number, (train_idx, valid_idx) in enumerate(
@@ -528,6 +548,7 @@ def write_submission(
     test_samples: list[Sample],
     probabilities: np.ndarray,
 ) -> None:
+    """Запись предсказаний в формате Kaggle submission."""
     sample_submission = pd.read_csv(sample_submission_path, dtype={"id": str})
     mapping = {
         sample.image_id.zfill(4): INT_TO_LABEL[int(prob.argmax())]

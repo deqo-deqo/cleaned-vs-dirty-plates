@@ -1,5 +1,17 @@
+"""
+Разведочный анализ данных (EDA) для датасета Cleaned vs Dirty V2.
+
+Скрипт строит графики по тренировочной выборке:
+- Распределение классов
+- Размеры изображений
+- Цветовые характеристики
+- Примеры изображений из каждого класса
+"""
+
+import argparse
 import io
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,11 +25,36 @@ plt.rcParams["figure.figsize"] = (12, 8)
 plt.rcParams["font.size"] = 10
 
 # Константы
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_ZIP_PATH = BASE_DIR.parent / "platesv2" / "plates.zip"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "_inspect"
 TRAIN_PREFIX = "plates/train/"
-LABEL_TO_INT = {"dirty": 0, "cleaned": 1}
+CHANNELS = ("R", "G", "B")
+SAMPLES_PER_CLASS = 10
+SAMPLE_GRID_COLS = 5
+
+ImageSize = tuple[int, int]
 
 
-def load_train_data(zip_path: Path):
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="EDA for Kaggle Cleaned vs Dirty V2 train images."
+    )
+    parser.add_argument(
+        "--zip-path", type=Path, default=DEFAULT_ZIP_PATH, help="Path to plates.zip"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory for saved plots",
+    )
+    return parser.parse_args()
+
+
+def load_train_data(
+    zip_path: Path,
+) -> tuple[list[Image.Image], list[str], list[ImageSize]]:
     """Загрузка тренировочных данных из архива."""
     images = []
     labels = []
@@ -42,7 +79,29 @@ def load_train_data(zip_path: Path):
     return images, labels, sizes
 
 
-def analyze_class_distribution(labels):
+def save_figure(save_path: Path) -> None:
+    """Сохранение текущего графика в файл и закрытие фигуры."""
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Сохранено: {save_path}")
+    plt.close()
+
+
+def format_stats(values: Sequence[float], precision: int) -> str:
+    """Строка с min/max/mean/std для набора значений."""
+    low, high = min(values), max(values)
+    if precision:
+        low_high = f"min={low:.{precision}f}, max={high:.{precision}f}"
+    else:
+        low_high = f"min={low}, max={high}"
+    mean_precision = max(precision, 1)
+    return (
+        f"{low_high}, mean={np.mean(values):.{mean_precision}f}, "
+        f"std={np.std(values):.{mean_precision}f}"
+    )
+
+
+def analyze_class_distribution(labels: Sequence[str], output_dir: Path) -> None:
     """Анализ распределения классов."""
     unique, counts = np.unique(labels, return_counts=True)
 
@@ -57,7 +116,7 @@ def analyze_class_distribution(labels):
     )
 
     # Добавляем значения на столбцы
-    for bar, count in zip(bars, counts):
+    for bar, count in zip(bars, counts, strict=True):
         height = bar.get_height()
         ax.text(
             bar.get_x() + bar.get_width() / 2.0,
@@ -69,13 +128,36 @@ def analyze_class_distribution(labels):
             fontweight="bold",
         )
 
-    plt.tight_layout()
-    plt.savefig("_inspect/class_distribution.png", dpi=150, bbox_inches="tight")
-    print("Сохранено: _inspect/class_distribution.png")
-    plt.close()
+    save_figure(output_dir / "class_distribution.png")
 
 
-def analyze_image_sizes(sizes, labels):
+def plot_histogram_with_mean(
+    ax: plt.Axes,
+    values: Sequence[float],
+    color: str,
+    xlabel: str,
+    title: str,
+    mean_format: str,
+) -> None:
+    """Гистограмма с вертикальной линией среднего значения."""
+    mean_value = float(np.mean(values))
+    ax.hist(values, bins=15, color=color, edgecolor="black", alpha=0.7)
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel("Количество", fontsize=11)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.axvline(
+        mean_value,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label=f"Среднее: {mean_value:{mean_format}}",
+    )
+    ax.legend()
+
+
+def analyze_image_sizes(
+    sizes: Sequence[ImageSize], labels: Sequence[str], output_dir: Path
+) -> None:
     """Анализ размеров изображений."""
     widths = [s[0] for s in sizes]
     heights = [s[1] for s in sizes]
@@ -83,53 +165,30 @@ def analyze_image_sizes(sizes, labels):
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-    # Распределение ширины
-    axes[0, 0].hist(widths, bins=15, color="skyblue", edgecolor="black", alpha=0.7)
-    axes[0, 0].set_xlabel("Ширина (px)", fontsize=11)
-    axes[0, 0].set_ylabel("Количество", fontsize=11)
-    axes[0, 0].set_title(
-        "Распределение ширины изображений", fontsize=12, fontweight="bold"
+    plot_histogram_with_mean(
+        axes[0, 0],
+        widths,
+        color="skyblue",
+        xlabel="Ширина (px)",
+        title="Распределение ширины изображений",
+        mean_format=".0f",
     )
-    axes[0, 0].axvline(
-        np.mean(widths),
-        color="red",
-        linestyle="--",
-        linewidth=2,
-        label=f"Среднее: {np.mean(widths):.0f}",
+    plot_histogram_with_mean(
+        axes[0, 1],
+        heights,
+        color="lightcoral",
+        xlabel="Высота (px)",
+        title="Распределение высоты изображений",
+        mean_format=".0f",
     )
-    axes[0, 0].legend()
-
-    # Распределение высоты
-    axes[0, 1].hist(heights, bins=15, color="lightcoral", edgecolor="black", alpha=0.7)
-    axes[0, 1].set_xlabel("Высота (px)", fontsize=11)
-    axes[0, 1].set_ylabel("Количество", fontsize=11)
-    axes[0, 1].set_title(
-        "Распределение высоты изображений", fontsize=12, fontweight="bold"
+    plot_histogram_with_mean(
+        axes[1, 0],
+        aspects,
+        color="lightgreen",
+        xlabel="Соотношение сторон (ширина/высота)",
+        title="Распределение соотношения сторон",
+        mean_format=".2f",
     )
-    axes[0, 1].axvline(
-        np.mean(heights),
-        color="red",
-        linestyle="--",
-        linewidth=2,
-        label=f"Среднее: {np.mean(heights):.0f}",
-    )
-    axes[0, 1].legend()
-
-    # Соотношение сторон
-    axes[1, 0].hist(aspects, bins=15, color="lightgreen", edgecolor="black", alpha=0.7)
-    axes[1, 0].set_xlabel("Соотношение сторон (ширина/высота)", fontsize=11)
-    axes[1, 0].set_ylabel("Количество", fontsize=11)
-    axes[1, 0].set_title(
-        "Распределение соотношения сторон", fontsize=12, fontweight="bold"
-    )
-    axes[1, 0].axvline(
-        np.mean(aspects),
-        color="red",
-        linestyle="--",
-        linewidth=2,
-        label=f"Среднее: {np.mean(aspects):.2f}",
-    )
-    axes[1, 0].legend()
 
     # Scatter: ширина vs высота
     colors = ["red" if label == "dirty" else "green" for label in labels]
@@ -139,42 +198,32 @@ def analyze_image_sizes(sizes, labels):
     axes[1, 1].set_title("Ширина vs Высота", fontsize=12, fontweight="bold")
     axes[1, 1].legend(["dirty", "cleaned"], loc="best")
 
-    plt.tight_layout()
-    plt.savefig("_inspect/image_sizes.png", dpi=150, bbox_inches="tight")
-    print("Сохранено: _inspect/image_sizes.png")
-    plt.close()
+    save_figure(output_dir / "image_sizes.png")
 
     # Статистика
-    print(f"\nСтатистика размеров изображений:")
-    print(
-        f"  Ширина:  min={min(widths)}, max={max(widths)}, mean={np.mean(widths):.1f}, std={np.std(widths):.1f}"
-    )
-    print(
-        f"  Высота:  min={min(heights)}, max={max(heights)}, mean={np.mean(heights):.1f}, std={np.std(heights):.1f}"
-    )
-    print(
-        f"  Aspect:  min={min(aspects):.2f}, max={max(aspects):.2f}, mean={np.mean(aspects):.2f}, std={np.std(aspects):.2f}"
-    )
+    print("\nСтатистика размеров изображений:")
+    print(f"  Ширина:  {format_stats(widths, precision=0)}")
+    print(f"  Высота:  {format_stats(heights, precision=0)}")
+    print(f"  Aspect:  {format_stats(aspects, precision=2)}")
 
 
-def analyze_color_stats(images, labels):
+def analyze_color_stats(
+    images: Sequence[Image.Image], labels: Sequence[str], output_dir: Path
+) -> None:
     """Анализ цветовых характеристик изображений."""
-    stats_by_class = {
-        "cleaned": {"R": [], "G": [], "B": []},
-        "dirty": {"R": [], "G": [], "B": []},
+    stats_by_class: dict[str, dict[str, list[float]]] = {
+        "cleaned": {channel: [] for channel in CHANNELS},
+        "dirty": {channel: [] for channel in CHANNELS},
     }
 
-    for img, label in zip(images, labels):
+    for img, label in zip(images, labels, strict=True):
         arr = np.array(img)
-        stats_by_class[label]["R"].append(arr[:, :, 0].mean())
-        stats_by_class[label]["G"].append(arr[:, :, 1].mean())
-        stats_by_class[label]["B"].append(arr[:, :, 2].mean())
+        for channel_index, channel in enumerate(CHANNELS):
+            stats_by_class[label][channel].append(arr[:, :, channel_index].mean())
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    channels = ["R", "G", "B"]
-    colors_plot = ["red", "green", "blue"]
 
-    for idx, (channel, color) in enumerate(zip(channels, colors_plot)):
+    for idx, channel in enumerate(CHANNELS):
         cleaned_vals = stats_by_class["cleaned"][channel]
         dirty_vals = stats_by_class["dirty"][channel]
 
@@ -201,71 +250,66 @@ def analyze_color_stats(images, labels):
         )
         axes[idx].legend()
 
-    plt.tight_layout()
-    plt.savefig("_inspect/color_stats.png", dpi=150, bbox_inches="tight")
-    print("Сохранено: _inspect/color_stats.png")
-    plt.close()
+    save_figure(output_dir / "color_stats.png")
 
 
-def visualize_samples(images, labels):
+def visualize_samples(
+    images: Sequence[Image.Image], labels: Sequence[str], output_dir: Path
+) -> None:
     """Визуализация примеров изображений из каждого класса."""
-    cleaned_imgs = [img for img, label in zip(images, labels) if label == "cleaned"]
-    dirty_imgs = [img for img, label in zip(images, labels) if label == "dirty"]
+    rows_per_class = SAMPLES_PER_CLASS // SAMPLE_GRID_COLS
 
-    fig, axes = plt.subplots(4, 5, figsize=(15, 12))
+    fig, axes = plt.subplots(2 * rows_per_class, SAMPLE_GRID_COLS, figsize=(15, 12))
     fig.suptitle("Примеры изображений из датасета", fontsize=16, fontweight="bold")
 
-    # Первые 2 ряда - cleaned
-    for i in range(10):
-        row = i // 5
-        col = i % 5
-        axes[row, col].imshow(cleaned_imgs[i])
-        axes[row, col].axis("off")
-        axes[row, col].set_title(f"Cleaned #{i}", fontsize=10)
+    # Первые ряды - cleaned, последние - dirty
+    for class_index, class_name in enumerate(("cleaned", "dirty")):
+        class_images = [
+            img
+            for img, label in zip(images, labels, strict=True)
+            if label == class_name
+        ]
+        for i in range(SAMPLES_PER_CLASS):
+            row = class_index * rows_per_class + i // SAMPLE_GRID_COLS
+            col = i % SAMPLE_GRID_COLS
+            axes[row, col].imshow(class_images[i])
+            axes[row, col].axis("off")
+            axes[row, col].set_title(f"{class_name.capitalize()} #{i}", fontsize=10)
 
-    # Последние 2 ряда - dirty
-    for i in range(10):
-        row = 2 + i // 5
-        col = i % 5
-        axes[row, col].imshow(dirty_imgs[i])
-        axes[row, col].axis("off")
-        axes[row, col].set_title(f"Dirty #{i}", fontsize=10)
-
-    plt.tight_layout()
-    plt.savefig("_inspect/sample_images.png", dpi=150, bbox_inches="tight")
-    print("Сохранено: _inspect/sample_images.png")
-    plt.close()
+    save_figure(output_dir / "sample_images.png")
 
 
-def main():
+def main() -> None:
     """Основная функция для запуска EDA."""
+    args = parse_args()
+
     print("=" * 60)
     print("Разведочный анализ данных (EDA)")
     print("=" * 60)
 
-    zip_path = Path("../platesv2/plates.zip")
-    if not zip_path.exists():
-        print(f"Ошибка: файл {zip_path} не найден!")
-        return
+    if not args.zip_path.exists():
+        raise FileNotFoundError(f"Missing archive: {args.zip_path}")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\nЗагрузка данных...")
-    images, labels, sizes = load_train_data(zip_path)
+    images, labels, sizes = load_train_data(args.zip_path)
     print(f"Загружено {len(images)} изображений")
 
     print("\nАнализ распределения классов...")
-    analyze_class_distribution(labels)
+    analyze_class_distribution(labels, args.output_dir)
 
     print("\nАнализ размеров изображений...")
-    analyze_image_sizes(sizes, labels)
+    analyze_image_sizes(sizes, labels, args.output_dir)
 
     print("\nАнализ цветовых характеристик...")
-    analyze_color_stats(images, labels)
+    analyze_color_stats(images, labels, args.output_dir)
 
     print("\nВизуализация примеров изображений...")
-    visualize_samples(images, labels)
+    visualize_samples(images, labels, args.output_dir)
 
     print("\n" + "=" * 60)
-    print("EDA завершен! Все графики сохранены в директории _inspect/")
+    print(f"EDA завершен! Все графики сохранены в директории {args.output_dir}")
     print("=" * 60)
 
 
