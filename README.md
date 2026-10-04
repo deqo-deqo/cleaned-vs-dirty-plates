@@ -25,7 +25,13 @@
 ├── platesv2_baseline.py      # Основной скрипт обучения модели
 ├── eda.py                     # Разведочный анализ данных (EDA)
 ├── analyze_results.py         # Анализ результатов и ошибок
-├── requirements.txt           # Зависимости проекта
+├── tests/                     # Тесты на синтетических данных (pytest)
+├── pyproject.toml             # Зависимости и настройки инструментов (Poetry)
+├── poetry.lock                # Зафиксированные версии зависимостей
+├── poetry.toml                # Виртуальное окружение создаётся в .venv проекта
+├── .pre-commit-config.yaml    # Хуки pre-commit (black, isort, flake8)
+├── .flake8                    # Настройки линтера flake8
+├── requirements.txt           # Зависимости для установки через pip
 ├── requirements-colab.txt     # Зависимости для Google Colab
 ├── README.md                  # Этот файл
 ├── ОТЧЕТ.md                   # Подробный отчет о проекте
@@ -44,12 +50,26 @@
 
 ### Установка зависимостей
 
+Зависимости управляются через [Poetry](https://python-poetry.org/). Виртуальное
+окружение создаётся в папке `.venv` внутри проекта (она добавлена в `.gitignore`),
+точные версии пакетов зафиксированы в `poetry.lock`.
+
+```bash
+poetry install
+source .venv/bin/activate   # либо запускать команды через `poetry run ...`
+```
+
+Альтернатива без Poetry:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+Данные соревнования (`plates.zip` и `sample_submission.csv`) по умолчанию ожидаются
+в соседней папке `../platesv2/`. Другой путь можно передать через `--zip-path`.
 
 ### Запуск разведочного анализа данных (EDA)
 
@@ -85,6 +105,33 @@ python analyze_results.py
 - Примеры ошибочных предсказаний
 - Детальный отчет по классификации
 
+## Качество кода
+
+В проекте настроены форматтеры и линтеры, которые запускаются автоматически
+перед каждым коммитом через [pre-commit](https://pre-commit.com/):
+
+- **black** - автоформатирование кода
+- **isort** - сортировка импортов
+- **flake8** - проверка стиля (PEP8), ошибок и сложности кода
+- базовые хуки: пробелы в конце строк, перевод строки в конце файла,
+  проверка YAML/TOML, защита от больших файлов
+
+```bash
+# Один раз после клонирования: подключить хуки к git
+poetry run pre-commit install
+
+# Запустить все проверки вручную
+poetry run pre-commit run --all-files
+
+# Запустить инструменты по отдельности
+poetry run black .
+poetry run isort .
+poetry run flake8 .
+
+# Тесты (используют синтетические изображения, датасет не нужен)
+poetry run pytest
+```
+
 ## Параметры командной строки
 
 ### platesv2_baseline.py
@@ -108,6 +155,17 @@ python platesv2_baseline.py [OPTIONS]
   --weights {imagenet,none}    Использовать ImageNet веса (default: imagenet)
   --workers INT                DataLoader workers (default: 0)
   --seed INT                   Random seed (default: 42)
+```
+
+### eda.py и analyze_results.py
+
+```bash
+python eda.py [--zip-path PATH] [--output-dir PATH]
+python analyze_results.py [--zip-path PATH] [--output-dir PATH] [--weights {imagenet,none}]
+
+Опции:
+  --zip-path PATH              Путь к plates.zip (default: ../platesv2/plates.zip)
+  --output-dir PATH            Папка для графиков (default: _inspect/)
 ```
 
 ### Примеры использования
@@ -245,7 +303,10 @@ drive.mount('/content/drive')
 
 ## Зависимости
 
-### requirements.txt (локальная установка)
+Основной источник - `pyproject.toml` и `poetry.lock`. Инструменты разработки
+(black, isort, flake8, pre-commit, pytest) вынесены в группу `dev`.
+
+### requirements.txt (локальная установка через pip)
 
 ```
 numpy==2.4.4

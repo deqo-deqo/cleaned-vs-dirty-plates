@@ -1,3 +1,10 @@
+"""
+Обучение baseline-модели для Kaggle Cleaned vs Dirty V2.
+
+Transfer learning на MobileNetV3-Small с кросс-валидацией, early stopping
+и Test Time Augmentation. Результат - файл submission.csv.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -5,6 +12,7 @@ import copy
 import io
 import random
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,17 +26,21 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
 
-
 TRAIN_PREFIX = "plates/train/"
 TEST_PREFIX = "plates/test/"
 LABEL_TO_INT = {"dirty": 0, "cleaned": 1}
 INT_TO_LABEL = {value: key for key, value in LABEL_TO_INT.items()}
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+NUM_CLASSES = len(LABEL_TO_INT)
+
+ImageOp = Callable[[Image.Image], Image.Image]
 
 
 @dataclass(frozen=True)
 class Sample:
+    """Изображение из архива: id, сырые байты и метка (None для теста)."""
+
     image_id: str
     image_bytes: bytes
     label: int | None = None
@@ -36,10 +48,11 @@ class Sample:
 
 class SquarePad:
     """Преобразование изображения в квадратную форму с padding.
-    
+
     Добавляет отступы (padding) до квадрата, заполняя их средним цветом изображения.
     Это сохраняет пропорции объектов и избегает искажений при resize.
     """
+
     def __call__(self, image: Image.Image) -> Image.Image:
         fill = tuple(int(v) for v in ImageStat.Stat(image).mean)
         side = max(image.size)
@@ -50,12 +63,14 @@ class SquarePad:
 
 
 class PlateDataset(Dataset):
+    """Датасет поверх списка Sample с выбором подмножества по индексам."""
+
     def __init__(
         self,
         samples: list[Sample],
         indices: np.ndarray,
         transform: transforms.Compose,
-        image_op=None,
+        image_op: ImageOp | None = None,
     ) -> None:
         self.samples = samples
         self.indices = [int(index) for index in indices]
@@ -65,7 +80,7 @@ class PlateDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int, str]:
         sample = self.samples[self.indices[index]]
         image = Image.open(io.BytesIO(sample.image_bytes)).convert("RGB")
         if self.image_op is not None:
@@ -146,6 +161,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def set_seed(seed: int) -> None:
+    """Фиксация seed для воспроизводимости результатов."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -154,6 +170,7 @@ def set_seed(seed: int) -> None:
 
 
 def resolve_device() -> torch.device:
+    """Выбор устройства: CUDA, затем MPS, иначе CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     if torch.backends.mps.is_available():
@@ -162,6 +179,7 @@ def resolve_device() -> torch.device:
 
 
 def load_samples(zip_path: Path) -> tuple[list[Sample], list[Sample]]:
+    """Чтение train и test изображений из архива plates.zip."""
     train_samples: list[Sample] = []
     test_samples: list[Sample] = []
 
@@ -193,14 +211,14 @@ def load_samples(zip_path: Path) -> tuple[list[Sample], list[Sample]]:
 
 def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Compose]:
     """Создание трансформаций для обучения и валидации.
-    
+
     Train transform включает агрессивную аугментацию для борьбы с переобучением
     на малом датасете (40 изображений):
     - RandomResizedCrop: случайный crop с масштабированием
     - Flips: горизонтальные и вертикальные отражения
     - Rotation: повороты до 22 градусов
     - ColorJitter: изменение яркости, контраста, насыщенности
-    
+
     Eval transform использует детерминированную обработку:
     - Resize с небольшим увеличением (1.12x)
     - CenterCrop до целевого размера
@@ -248,12 +266,12 @@ def build_transforms(image_size: int) -> tuple[transforms.Compose, transforms.Co
 
 def build_model(device: torch.device, weights_mode: str) -> nn.Module:
     """Создание модели MobileNetV3-Small с transfer learning.
-    
+
     Архитектура:
     - Backbone: MobileNetV3-Small (предобучен на ImageNet)
     - Замораживаем все слои кроме последнего блока features[-1]
     - Заменяем classifier на бинарную классификацию (2 класса)
-    
+
     Это позволяет использовать предобученные признаки и дообучить
     только верхние слои на малом датасете (40 изображений).
     """
@@ -265,15 +283,15 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
             weights = models.MobileNet_V3_Small_Weights.DEFAULT
         except Exception:
             weights = None
-    
+
     try:
         model = models.mobilenet_v3_small(weights=weights)
     except Exception:
         print("warning=failed_to_load_imagenet_weights fallback=random_init")
         model = models.mobilenet_v3_small(weights=None)
-    
+
     # Замена последнего слоя для бинарной классификации
-    model.classifier[3] = nn.Linear(model.classifier[3].in_features, 2)
+    model.classifier[3] = nn.Linear(model.classifier[3].in_features, NUM_CLASSES)
 
     # Заморозка всех параметров
     for parameter in model.parameters():
@@ -288,7 +306,10 @@ def build_model(device: torch.device, weights_mode: str) -> nn.Module:
     return model.to(device)
 
 
-def build_optimizer(model: nn.Module, args: argparse.Namespace) -> torch.optim.Optimizer:
+def build_optimizer(
+    model: nn.Module, args: argparse.Namespace
+) -> torch.optim.Optimizer:
+    """AdamW с раздельными learning rate для backbone и classifier."""
     head_params = list(model.classifier.parameters())
     backbone_params = list(model.features[-1].parameters())
     return torch.optim.AdamW(
@@ -307,6 +328,7 @@ def train_one_epoch(
     criterion: nn.Module,
     device: torch.device,
 ) -> float:
+    """Одна эпоха обучения; возвращает средний loss по датасету."""
     model.train()
     running_loss = 0.0
 
@@ -335,14 +357,14 @@ def predict_proba(
     workers: int,
 ) -> np.ndarray:
     """Предсказание вероятностей с Test Time Augmentation (TTA).
-    
+
     TTA применяет 3 варианта аугментации (оригинал, зеркало, переворот)
     и усредняет предсказания для повышения стабильности результатов.
     """
     tta_ops = [
-        None,              # Оригинальное изображение
-        ImageOps.mirror,   # Горизонтальное отражение
-        ImageOps.flip,     # Вертикальное отражение
+        None,  # Оригинальное изображение
+        ImageOps.mirror,  # Горизонтальное отражение
+        ImageOps.flip,  # Вертикальное отражение
     ]
     probabilities = []
 
@@ -419,7 +441,9 @@ def train_fold(
             batch_size=args.batch_size,
             workers=args.workers,
         )
-        valid_targets = np.asarray([train_samples[i].label for i in valid_idx], dtype=int)
+        valid_targets = np.asarray(
+            [train_samples[i].label for i in valid_idx], dtype=int
+        )
         valid_pred = valid_probs.argmax(axis=1)
         valid_score = accuracy_score(valid_targets, valid_pred)
 
@@ -449,7 +473,7 @@ def run_cross_validation(
     device: torch.device,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Кросс-валидация с сохранением out-of-fold предсказаний.
-    
+
     Использует StratifiedKFold для сохранения баланса классов в каждом фолде.
     Возвращает out-of-fold предсказания для train и усредненные предсказания для test.
     """
@@ -461,8 +485,8 @@ def run_cross_validation(
     )
     eval_transform = build_transforms(args.image_size)[1]
 
-    oof_prob = np.zeros((len(train_samples), 2), dtype=np.float32)
-    test_prob = np.zeros((len(test_samples), 2), dtype=np.float32)
+    oof_prob = np.zeros((len(train_samples), NUM_CLASSES), dtype=np.float32)
+    test_prob = np.zeros((len(test_samples), NUM_CLASSES), dtype=np.float32)
     fold_scores = []
 
     for fold_number, (train_idx, valid_idx) in enumerate(
@@ -524,6 +548,7 @@ def write_submission(
     test_samples: list[Sample],
     probabilities: np.ndarray,
 ) -> None:
+    """Запись предсказаний в формате Kaggle submission."""
     sample_submission = pd.read_csv(sample_submission_path, dtype={"id": str})
     mapping = {
         sample.image_id.zfill(4): INT_TO_LABEL[int(prob.argmax())]
@@ -550,9 +575,7 @@ def main() -> None:
     if not args.zip_path.exists():
         raise FileNotFoundError(f"Missing archive: {args.zip_path}")
     if not args.sample_submission.exists():
-        raise FileNotFoundError(
-            f"Missing sample submission: {args.sample_submission}"
-        )
+        raise FileNotFoundError(f"Missing sample submission: {args.sample_submission}")
 
     device = resolve_device()
     train_samples, test_samples = load_samples(args.zip_path)

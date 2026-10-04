@@ -1,0 +1,45 @@
+[project]
+name = "cleaned-vs-dirty-plates"
+version = "1.0.0"
+description = "Классификация тарелок Cleaned vs Dirty V2 (Kaggle): PyTorch, transfer learning на MobileNetV3-Small"
+authors = [{ name = "Dmitry" }]
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy==2.4.4",
+    "pandas==3.0.2",
+    "Pillow==12.2.0",
+    "scikit-learn==1.8.0",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "matplotlib==3.10.8",
+    "seaborn==0.13.2",
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "black (>=26.5.1,<27.0.0)",
+    "isort (>=9.0.2,<10.0.0)",
+    "flake8 (>=7.4.1,<8.0.0)",
+    "pre-commit (>=4.6.2,<5.0.0)",
+    "pytest (>=9.1.1,<10.0.0)"
+]
