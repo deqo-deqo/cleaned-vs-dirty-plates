@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "глубокие нейронные сети",
+			"path": "."
+		},
+		{
+			"name": "platesv2",
+			"path": "../platesv2"
+		}
+	],
+	"settings": {}
+}

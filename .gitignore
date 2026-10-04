@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch
+*.pth
+*.pt
+
+# Data files (слишком большие для git)
+*.zip
+*.csv
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Kiro
+.kiro/
+
+# Outputs (можно пересоздать)
+outputs/
+models/
+
+# Временные файлы
+*.log
+*.tmp
