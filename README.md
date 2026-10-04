@@ -161,12 +161,17 @@ python platesv2_baseline.py [OPTIONS]
 
 ```bash
 python eda.py [--zip-path PATH] [--output-dir PATH]
-python analyze_results.py [--zip-path PATH] [--output-dir PATH] [--weights {imagenet,none}]
+python analyze_results.py [--zip-path PATH] [--output-dir PATH] [параметры обучения]
 
 Опции:
   --zip-path PATH              Путь к plates.zip (default: ../platesv2/plates.zip)
   --output-dir PATH            Папка для графиков (default: _inspect/)
 ```
+
+`analyze_results.py` обучает модели той же кросс-валидацией, что и
+`platesv2_baseline.py`, и принимает те же параметры обучения (`--epochs`,
+`--folds`, `--seed` и т.д.), поэтому анализ относится к тем же моделям,
+которые формируют `submission.csv`.
 
 ### Примеры использования
 
@@ -239,10 +244,10 @@ python platesv2_baseline.py --image-size 224 --batch-size 8
 ```
               precision    recall  f1-score   support
 
-       dirty      0.529     0.450     0.486        20
-     cleaned      0.522     0.600     0.558        20
+       dirty      0.800     0.400     0.533        20
+     cleaned      0.600     0.900     0.720        20
 
-    accuracy                          0.525        40
+    accuracy                          0.650        40
 ```
 
 ## Визуализации
