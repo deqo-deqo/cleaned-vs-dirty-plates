@@ -90,31 +90,8 @@ class PlateDataset(Dataset):
         return tensor, label, sample.image_id
 
 
-def parse_args() -> argparse.Namespace:
-    base_dir = Path(__file__).resolve().parent
-    data_dir = base_dir.parent / "platesv2"
-
-    parser = argparse.ArgumentParser(
-        description="PyTorch baseline for Kaggle Cleaned vs Dirty V2."
-    )
-    parser.add_argument(
-        "--zip-path",
-        type=Path,
-        default=data_dir / "plates.zip",
-        help="Path to plates.zip",
-    )
-    parser.add_argument(
-        "--sample-submission",
-        type=Path,
-        default=data_dir / "sample_submission.csv",
-        help="Path to sample_submission.csv",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=base_dir / "submission.csv",
-        help="Where to write Kaggle submission",
-    )
+def add_training_args(parser: argparse.ArgumentParser) -> None:
+    """Гиперпараметры обучения, общие для обучения и анализа результатов."""
     parser.add_argument("--folds", type=int, default=3, help="Number of CV folds")
     parser.add_argument("--epochs", type=int, default=6, help="Training epochs")
     parser.add_argument(
@@ -157,6 +134,34 @@ def parse_args() -> argparse.Namespace:
         "--workers", type=int, default=0, help="DataLoader workers; keep 0 on macOS"
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+
+def parse_args() -> argparse.Namespace:
+    base_dir = Path(__file__).resolve().parent
+    data_dir = base_dir.parent / "platesv2"
+
+    parser = argparse.ArgumentParser(
+        description="PyTorch baseline for Kaggle Cleaned vs Dirty V2."
+    )
+    parser.add_argument(
+        "--zip-path",
+        type=Path,
+        default=data_dir / "plates.zip",
+        help="Path to plates.zip",
+    )
+    parser.add_argument(
+        "--sample-submission",
+        type=Path,
+        default=data_dir / "sample_submission.csv",
+        help="Path to sample_submission.csv",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=base_dir / "submission.csv",
+        help="Where to write Kaggle submission",
+    )
+    add_training_args(parser)
     return parser.parse_args()
 
 

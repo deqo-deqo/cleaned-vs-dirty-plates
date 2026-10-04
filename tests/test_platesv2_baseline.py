@@ -15,9 +15,10 @@ from platesv2_baseline import (
     build_transforms,
     load_samples,
     predict_proba,
+    run_cross_validation,
     write_submission,
 )
-from tests.conftest import TEST_IMAGES, TRAIN_PER_CLASS
+from tests.conftest import TEST_IMAGES, TRAIN_PER_CLASS, make_training_args
 
 IMAGE_SIZE = 64
 
@@ -121,3 +122,16 @@ def test_write_submission_fails_on_missing_predictions(
         write_submission(
             sample_submission, tmp_path / "submission.csv", test_samples, probabilities
         )
+
+
+def test_cross_validation_returns_oof_and_test_probabilities(plates_zip: Path) -> None:
+    train_samples, test_samples = load_samples(plates_zip)
+
+    oof_prob, test_prob = run_cross_validation(
+        train_samples, test_samples, make_training_args(), torch.device("cpu")
+    )
+
+    assert oof_prob.shape == (len(train_samples), NUM_CLASSES)
+    assert test_prob.shape == (len(test_samples), NUM_CLASSES)
+    np.testing.assert_allclose(oof_prob.sum(axis=1), 1.0, rtol=1e-5)
+    np.testing.assert_allclose(test_prob.sum(axis=1), 1.0, rtol=1e-5)
