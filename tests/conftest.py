@@ -1,3 +1,4 @@
+import argparse
 import io
 import zipfile
 from pathlib import Path
@@ -8,6 +9,20 @@ from PIL import Image
 
 TRAIN_PER_CLASS = 10
 TEST_IMAGES = 4
+
+
+def make_training_args(**overrides: object) -> argparse.Namespace:
+    """Гиперпараметры по умолчанию, уменьшенные для быстрых тестов."""
+    from platesv2_baseline import add_training_args
+
+    parser = argparse.ArgumentParser()
+    add_training_args(parser)
+    args = parser.parse_args(
+        ["--weights", "none", "--folds", "2", "--epochs", "2", "--image-size", "64"]
+    )
+    for name, value in overrides.items():
+        setattr(args, name, value)
+    return args
 
 
 def make_jpeg(rng: np.random.Generator, width: int, height: int) -> bytes:

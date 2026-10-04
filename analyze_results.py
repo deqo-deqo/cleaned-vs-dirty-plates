@@ -16,17 +16,14 @@ import numpy as np
 import seaborn as sns
 from PIL import Image
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import StratifiedKFold
 
 from platesv2_baseline import (
     INT_TO_LABEL,
-    NUM_CLASSES,
     Sample,
-    build_model,
-    build_transforms,
+    add_training_args,
     load_samples,
-    predict_proba,
     resolve_device,
+    run_cross_validation,
     set_seed,
 )
 
@@ -39,10 +36,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_ZIP_PATH = BASE_DIR.parent / "platesv2" / "plates.zip"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "_inspect"
 CLASS_NAMES = [INT_TO_LABEL[index] for index in sorted(INT_TO_LABEL)]
-SEED = 42
-N_FOLDS = 3
-IMAGE_SIZE = 160
-BATCH_SIZE = 16
 MAX_ERRORS_SHOWN = 12
 ERROR_GRID_COLS = 4
 
@@ -60,51 +53,37 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIR,
         help="Directory for saved plots",
     )
-    parser.add_argument(
-        "--weights",
-        choices=("imagenet", "none"),
-        default="imagenet",
-        help="Use ImageNet pretrained weights or start from scratch",
-    )
+    add_training_args(parser)
     return parser.parse_args()
 
 
 def train_and_get_predictions(
-    zip_path: Path, weights_mode: str = "imagenet"
+    zip_path: Path, args: argparse.Namespace
 ) -> tuple[list[Sample], np.ndarray, np.ndarray]:
-    """Обучение модели и получение out-of-fold предсказаний."""
+    """Обучение модели и получение out-of-fold предсказаний.
+
+    Использует ту же кросс-валидацию, что и platesv2_baseline.py: каждое
+    изображение предсказывается моделью, обученной на остальных фолдах.
+
+    Тестовая выборка передается в кросс-валидацию намеренно: так расходуется
+    та же последовательность случайных чисел, и анализируются ровно те модели,
+    которые формируют submission.csv.
+    """
     print("Загрузка данных и обучение модели...")
 
-    train_samples, _ = load_samples(zip_path)
+    train_samples, test_samples = load_samples(zip_path)
     labels = np.asarray([sample.label for sample in train_samples], dtype=int)
     device = resolve_device()
 
     print(f"  Устройство: {device.type}")
     print(f"  Тренировочных изображений: {len(train_samples)}")
 
-    # Кросс-валидация
-    splitter = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEED)
-    eval_transform = build_transforms(IMAGE_SIZE)[1]
-
-    oof_probs = np.zeros((len(train_samples), NUM_CLASSES), dtype=np.float32)
-
-    for fold_number, (_, valid_idx) in enumerate(splitter.split(labels, labels), 1):
-        print(f"  Обучение fold {fold_number}/{N_FOLDS}...")
-
-        # Простое обучение (без полного цикла, используем только валидацию)
-        model = build_model(device=device, weights_mode=weights_mode)
-
-        # Предсказания для валидационной части
-        valid_probs = predict_proba(
-            model=model,
-            samples=train_samples,
-            indices=valid_idx,
-            transform=eval_transform,
-            device=device,
-            batch_size=BATCH_SIZE,
-            workers=0,
-        )
-        oof_probs[valid_idx] = valid_probs
+    oof_probs, _ = run_cross_validation(
+        train_samples=train_samples,
+        test_samples=test_samples,
+        args=args,
+        device=device,
+    )
 
     return train_samples, oof_probs, labels
 
@@ -273,15 +252,13 @@ def main() -> None:
     print("Анализ результатов обучения модели")
     print("=" * 60)
 
-    set_seed(SEED)
+    set_seed(args.seed)
 
     if not args.zip_path.exists():
         raise FileNotFoundError(f"Missing archive: {args.zip_path}")
 
     # Получаем предсказания
-    samples, oof_probs, y_true = train_and_get_predictions(
-        args.zip_path, weights_mode=args.weights
-    )
+    samples, oof_probs, y_true = train_and_get_predictions(args.zip_path, args)
     y_pred = oof_probs.argmax(axis=1)
 
     # Создаем директорию для результатов
